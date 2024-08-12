@@ -65,6 +65,8 @@ class Viewer(Plugin):
         self.locationMarkers = []
         self.layers = []
         self.geoPointStampedTopicList = []
+        self.coordinate_grid_lines = []
+        self.coordinate_grid_line_labels = []
 
 
 
@@ -156,6 +158,7 @@ class Viewer(Plugin):
     def fetch_map(self):
         try:
             self.show_progress_bar()
+
             latlon = self.latlonInput.text().split(',')
             self.lat_deg = float(latlon[0].strip())
             self.lon_deg = float(latlon[1].strip())
@@ -166,10 +169,12 @@ class Viewer(Plugin):
             # rospy.loginfo(f"Fetching map for coordinates: {lat}, {lon}, zoom: {self.zoom}")
             
             self.get_image_cluster()
-            
             qimage = QImage(self.current_image.tobytes("raw", "RGB"), self.current_image.width, self.current_image.height, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qimage)
             
+            self.coordinate_grid_lines.clear()
+            self.coordinate_grid_line_labels.clear()
+            self.locationMarkers.clear()
             self.map_scene.clear()
             self.map_scene.addPixmap(pixmap)
             self.map_scene.setSceneRect(QRectF(pixmap.rect()))
@@ -330,6 +335,8 @@ class Viewer(Plugin):
 
     def draw_coordinate_overlay(self, scene, image_width, image_height):
         # Calculate the number of grid lines
+        
+
         num_lines = 25
         x_step = image_width / num_lines
         y_step = image_height / num_lines
@@ -351,11 +358,13 @@ class Viewer(Plugin):
         for i in range(1, num_lines):
             x = i * x_step
             line = scene.addLine(x, 0, x, image_height, line_color)
+            self.coordinate_grid_lines.append(line)
             line.setZValue(1)
 
             # Calculate longitude
             lon = west_lon + (east_lon - west_lon) * (x / image_width)
             lon_label = scene.addText(f"{lon:.4f}°", font)
+            self.coordinate_grid_line_labels.append(lon_label)
             lon_label.setDefaultTextColor(text_color)
             lon_label.setPos(x, image_height - 20)
             lon_label.setZValue(2)
@@ -364,11 +373,13 @@ class Viewer(Plugin):
         for i in range(1, num_lines):
             y = i * y_step
             line = scene.addLine(0, y, image_width, y, line_color)
+            self.coordinate_grid_lines.append(line)
             line.setZValue(1)
 
             # Calculate latitude
             lat = north_lat + (south_lat - north_lat) * (y / image_height)
             lat_label = scene.addText(f"{lat:.4f}°", font)
+            self.coordinate_grid_line_labels.append(lat_label)
             lat_label.setDefaultTextColor(text_color)
             lat_label.setPos(5, y - 10)
             lat_label.setZValue(2)
@@ -391,6 +402,21 @@ class Viewer(Plugin):
             self.draw_coordinate_overlay(self.map_scene, self.current_image.width, self.current_image.height)
         else:
             self.show_coordinates = False
+            self.remove_coordinate_overlay()
+
+    def remove_coordinate_overlay(self):
+        for line in self.coordinate_grid_lines:
+            try:
+                self.map_scene.removeItem(line)
+            except Exception as e:
+                rospy.logerr(f"Couldn't remove line: {str(e)}")
+        for label in self.coordinate_grid_line_labels:
+            try:
+                self.map_scene.removeItem(label)
+            except Exception as e:
+                rospy.logerr(f"Couldn't remove label: {str(e)}")
+        self.coordinate_grid_lines.clear()
+        self.coordinate_grid_line_labels.clear()
 
     def shutdown_plugin(self):
         if self.subscriber is not None:
