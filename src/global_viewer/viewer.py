@@ -12,16 +12,17 @@ from PyQt5.QtGui import QPixmap, QImage, QPainter, QFont, QColor, QBrush, QPen
 from PyQt5.QtCore import Qt, QRectF, pyqtSignal, pyqtSlot
 
 # Marker Stuff
-from local_to_enu.msg import GeoPointStampedList
+from rock_detection_msgs.msg import ObstacleList
 
 
 class LocationMarker:
-    def __init__(self,lat, lon, color=Qt.red, is_origin_marker=False):
+    def __init__(self,lat, lon, obstacle_id, color=Qt.red, is_origin_marker=False):
         self.lat = lat
         self.lon = lon
         self.color = color
         self.qt_marker = None
         self.is_origin_marker = is_origin_marker
+        self.obstacle_id = obstacle_id
 
     def add_qt_marker(self, marker):
         self.qt_marker = marker
@@ -48,7 +49,7 @@ class DraggableGraphicsView(QGraphicsView):
         self.scale(factor, factor)
 
 class Viewer(Plugin):
-    new_message_signal = pyqtSignal(GeoPointStampedList)
+    new_message_signal = pyqtSignal(ObstacleList)
 
     def __init__(self, context):
         super(Viewer, self).__init__(context)
@@ -185,7 +186,7 @@ class Viewer(Plugin):
             if self.show_coordinates:
                 self.draw_coordinate_overlay(self.map_scene, self.current_image.width, self.current_image.height)
 
-            self.add_marker(self.lat_deg, self.lon_deg, Qt.blue, is_origin_marker=True)
+            self.add_marker(self.lat_deg, self.lon_deg, Qt.blue, None, is_origin_marker=True)
             
             rospy.loginfo("Map successfully loaded and displayed")
 
@@ -209,7 +210,7 @@ class Viewer(Plugin):
         self.geoPointStampedTopicList.append("None")
         for topic, topic_type in rospy.get_published_topics():
             # rospy.loginfo(f"Topic: {topic}, Type: {topic_type}")
-            if topic_type == "local_to_enu/GeoPointStampedList":
+            if topic_type == "rock_detection_msgs/ObstacleList":
                 self.geoPointStampedTopicList.append(topic)
 
         for topic in self.geoPointStampedTopicList:
@@ -267,8 +268,8 @@ class Viewer(Plugin):
         self.progressBar.setValue(value)
         QApplication.processEvents()
 
-    def add_marker(self, lat, lon, color, is_origin_marker=False):
-        marker = LocationMarker(lat, lon, is_origin_marker=is_origin_marker, color=color)
+    def add_marker(self, lat, lon, color, obstacle_id, is_origin_marker=False):
+        marker = LocationMarker(lat=lat, lon=lon, obstacle_id=obstacle_id, is_origin_marker=is_origin_marker, color=color)
         n = 2.0 ** self.zoom
         lat_rad = math.radians(marker.lat)
         
@@ -309,18 +310,26 @@ class Viewer(Plugin):
             rospy.logwarn("Not ready")
             return
         
-        point_tuples = [(lat, lon) for lat, lon in [(point.position.latitude, point.position.longitude) for point in msg.geo_points]]
 
-        # Remove markers that are not in the new message anymore
-        for locationMarker in self.locationMarkers:
-            if locationMarker.get_coordinates() in point_tuples:
-                return
-            else:
-                self.remove_qt_marker(locationMarker)
-        self.locationMarkers = [locationMarker for locationMarker in self.locationMarkers if locationMarker.get_coordinates() in point_tuples]
-        # Add new markers
-        for lat, lon in point_tuples:
-            self.add_marker(lat, lon, Qt.red)
+        rocks = [obstacle for obstacle in msg.obstacles if obstacle.type == "rock"]
+        ids_of_current_markers = [marker.obstacle_id for marker in self.locationMarkers if not marker.is_origin_marker]
+        rock_ids = [rock.obstacle_id for rock in rocks]
+
+        rospy.loginfo(f"Received {len(rocks)} rocks")
+
+        for rock in rocks:
+            if rock.obstacle_id in ids_of_current_markers:
+                continue
+            rospy.loginfo(f"Adding marker for rock {rock.obstacle_id}")
+            self.add_marker(rock.lat, rock.lon, Qt.red, rock.obstacle_id)
+        
+        for marker in self.locationMarkers:
+            if marker.obstacle_id not in rock_ids and not marker.is_origin_marker:
+                rospy.loginfo(f"Removing marker for rock {marker.obstacle_id}")
+                self.remove_qt_marker(marker)
+                self.locationMarkers.remove(marker)
+
+
 
 
     def hide_progress_bar(self):
@@ -393,7 +402,7 @@ class Viewer(Plugin):
                 self.subscriber.unregister()
         else:
             print(f"Rock topic changed to: {value}")
-            self.subscriber = rospy.Subscriber(value, GeoPointStampedList, self.rock_locations_callback)
+            self.subscriber = rospy.Subscriber(value, ObstacleList, self.rock_locations_callback)
 
     
     def toggle_coordinates(self, state):
